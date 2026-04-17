@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 from fpdf import FPDF
 from datetime import datetime
@@ -65,155 +64,131 @@ st.markdown(
 )
 
 # ===============================
-# SIDEBAR
+# REQUIRED COLUMNS
 # ===============================
-with st.sidebar:
-    st.header("Dashboard Controls")
-    st.markdown(f"**{DESIGNED_BY}**")
+REQUIRED_COLUMNS = [
+    "Service Type",
+    "Company",
+    "Industry",
+    "Country",
+    "Website",
+    "Email",
+    "Phone",
+    "LinkedIn",
+    "Leader Name",
+    "Leader Title",
+    "Description",
+    "Why Selected",
+    "Revenue ($m)",
+    "EBITDA ($m)",
+    "Growth Rate",
+    "EBITDA Margin"
+]
 
-    service_type = st.multiselect(
-        "Service Type",
-        ["Sell-Side", "Buy-Side"],
-        default=["Sell-Side", "Buy-Side"]
-    )
-
-    industry = st.multiselect(
-        "Industry",
-        [
-            "Tech",
-            "Healthcare",
-            "Industrial",
-            "Distribution",
-            "Facility Services",
-            "Industrial Services",
-            "Manufacturing",
-            "Business Services"
-        ],
-        default=["Industrial", "Distribution", "Facility Services"]
-    )
-
-    country = st.multiselect(
-        "Country",
-        [
-            "United States",
-            "Canada",
-            "United Kingdom",
-            "Germany",
-            "France",
-            "Netherlands",
-            "Australia"
-        ],
-        default=["United States", "Canada", "United Kingdom"]
-    )
-
-    companies_per_combo = st.slider("Companies per industry-country combination", 1, 10, 4)
-    num_companies = st.slider("Display top prospects", 5, 100, 30)
-    revenue_min = st.slider("Minimum Revenue ($m)", 10, 500, 50)
-    score_threshold = st.slider("Minimum Priority Score", 0, 100, 20)
+OPTIONAL_COLUMNS = [
+    "Ownership Type",
+    "Valuation Notes",
+    "Strategic Notes",
+    "Economic Factors",
+    "Political Factors",
+    "Environmental Factors",
+    "Quantitative Notes",
+    "Recommendation"
+]
 
 # ===============================
-# DATA GENERATION
+# DATA LOADER
 # ===============================
-def generate_data(industries, countries, n_per_combo, selected_services):
-    rng = np.random.default_rng(42)
+@st.cache_data
+def load_real_data(file_path: str) -> pd.DataFrame:
+    df = pd.read_csv(file_path)
 
-    first_names = ["John", "Jane", "Michael", "Sarah", "David", "Emily", "Chris", "Sophia", "Daniel", "Olivia"]
-    last_names = ["Smith", "Johnson", "Brown", "Taylor", "Anderson", "Clark", "Miller", "Davis", "Hall", "Turner"]
-    company_prefix = ["Vertex", "NorthBridge", "Summit", "BluePeak", "Evercore", "WestGate", "IronStone", "Lakeview", "Crestline", "Pioneer"]
+    missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            "Missing required columns in real_companies.csv: " + ", ".join(missing_cols)
+        )
 
-    rows = []
-    for svc in selected_services:
-        for ind in industries:
-            for ctry in countries:
-                for i in range(n_per_combo):
-                    revenue = int(rng.integers(20, 600))
-                    ebitda_cap = max(6, int(revenue * 0.28))
-                    ebitda = int(rng.integers(5, ebitda_cap))
-                    growth = round(float(rng.uniform(0.02, 0.30)), 2)
-                    margin = round(ebitda / revenue, 2)
+    for col in REQUIRED_COLUMNS + OPTIONAL_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
 
-                    leader_first = rng.choice(first_names)
-                    leader_last = rng.choice(last_names)
-                    leader_name = f"{leader_first} {leader_last}"
+    # Clean whitespace
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = df[col].fillna("").astype(str).str.strip()
 
-                    company_name = f"{rng.choice(company_prefix)} {ind} {i+1}"
-                    domain_name = company_name.lower().replace(" ", "").replace("&", "and")
+    # Numeric cleanup
+    numeric_cols = ["Revenue ($m)", "EBITDA ($m)", "Growth Rate", "EBITDA Margin"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
-                    if svc == "Sell-Side":
-                        rationale = rng.choice([
-                            "Founder-owned; likely succession need",
-                            "Strong niche positioning; attractive to acquirers",
-                            "Margin expansion opportunity",
-                            "Potential strategic premium in fragmented market",
-                            "Likely seller candidate due to scale inflection",
-                            "Could benefit from broader buyer outreach",
-                            "Positioned well for a structured sale process"
-                        ])
-                    else:
-                        rationale = rng.choice([
-                            "Expansion-oriented platform candidate",
-                            "Strong balance sheet for acquisitions",
-                            "Likely consolidator in fragmented market",
-                            "Strategic buyer fit with adjacency expansion",
-                            "Add-on acquisition potential",
-                            "Can use M&A to accelerate market entry",
-                            "Well-positioned for capability expansion"
-                        ])
+    # Drop rows missing core values
+    df = df.dropna(subset=["Company", "Service Type", "Industry", "Country"])
 
-                    rows.append({
-                        "Service Type": svc,
-                        "Company": company_name,
-                        "Industry": ind,
-                        "Country": ctry,
-                        "Revenue ($m)": revenue,
-                        "EBITDA ($m)": ebitda,
-                        "Growth Rate": growth,
-                        "EBITDA Margin": margin,
-                        "Leader Name": leader_name,
-                        "Leader Title": rng.choice(["CEO", "President", "Owner", "Managing Director"]),
-                        "Website": f"https://www.{domain_name}.com",
-                        "Email": f"info@{domain_name}.com",
-                        "Phone": f"+1-555-{int(rng.integers(100,999))}-{int(rng.integers(1000,9999))}",
-                        "LinkedIn": f"https://www.linkedin.com/in/{leader_first.lower()}-{leader_last.lower()}",
-                        "Description": f"{company_name} is a {ind.lower()} company operating in {ctry} with strategic relevance for {svc.lower()} advisory opportunities.",
-                        "Why Selected": rationale
-                    })
-    return pd.DataFrame(rows)
+    # Standardize service type
+    df["Service Type"] = df["Service Type"].replace({
+        "Sellside": "Sell-Side",
+        "Sell Side": "Sell-Side",
+        "Buyside": "Buy-Side",
+        "Buy Side": "Buy-Side"
+    })
 
-# ===============================
-# BUILD DATASET
-# ===============================
-if service_type and industry and country:
-    df = generate_data(industry, country, companies_per_combo, service_type)
+    # If Recommendation is blank, fill later
+    df["Recommendation"] = df["Recommendation"].fillna("").astype(str)
 
-    if not df.empty:
-        df = df[df["Revenue ($m)"] >= revenue_min].copy()
-else:
-    df = pd.DataFrame()
+    return df
+
+def safe_text(value):
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
+
+def safe_link(label, url):
+    url = safe_text(url)
+    if url:
+        return f"[{label}]({url})"
+    return "Not available"
+
+def safe_mail(email):
+    email = safe_text(email)
+    if email:
+        return f"[{email}](mailto:{email})"
+    return "Not available"
 
 # ===============================
 # SCORING
 # ===============================
-if not df.empty:
-    max_revenue = max(df["Revenue ($m)"].max(), 1)
+def add_priority_scores(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
 
-    df["Priority Score"] = (
-        35 * df["Growth Rate"] +
-        35 * df["EBITDA Margin"] +
-        15 * (df["Revenue ($m)"] / max_revenue) +
-        15 * np.where(df["Service Type"] == "Buy-Side", 1.00, 0.90)
+    if out.empty:
+        out["Priority Score"] = []
+        return out
+
+    revenue_max = max(out["Revenue ($m)"].max(skipna=True), 1) if out["Revenue ($m)"].notna().any() else 1
+
+    growth_component = out["Growth Rate"].fillna(0)
+    margin_component = out["EBITDA Margin"].fillna(0)
+    revenue_component = out["Revenue ($m)"].fillna(0) / revenue_max
+    service_component = out["Service Type"].apply(lambda x: 1.00 if x == "Buy-Side" else 0.90)
+
+    out["Priority Score"] = (
+        35 * growth_component +
+        35 * margin_component +
+        15 * revenue_component +
+        15 * service_component
     ) * 100 / 2
 
-    df["Priority Score"] = df["Priority Score"].round(1)
+    out["Priority Score"] = out["Priority Score"].round(1)
 
-    df["Recommendation"] = np.where(
-        df["Service Type"] == "Buy-Side",
-        np.where(df["Priority Score"] >= 50, "High-priority Buy-Side Target", "Monitor / Secondary Buy-Side Target"),
-        np.where(df["Priority Score"] >= 50, "High-priority Sell-Side Target", "Monitor / Secondary Sell-Side Target")
+    # Fill recommendation only if blank
+    blank_mask = out["Recommendation"].astype(str).str.strip() == ""
+    out.loc[blank_mask, "Recommendation"] = out.loc[blank_mask, "Service Type"].apply(
+        lambda x: "High-priority Buy-Side Target" if x == "Buy-Side" else "High-priority Sell-Side Target"
     )
 
-    df = df[df["Priority Score"] >= score_threshold].copy()
-    df = df.sort_values(["Priority Score", "Revenue ($m)"], ascending=[False, False]).head(num_companies)
+    return out
 
 # ===============================
 # EXPORT HELPERS
@@ -239,7 +214,6 @@ def clean_pdf_text(value, max_len=140):
         return ""
 
     text = str(value)
-
     replacements = {
         "\u2013": "-",
         "\u2014": "-",
@@ -254,8 +228,6 @@ def clean_pdf_text(value, max_len=140):
         text = text.replace(old, new)
 
     text = re.sub(r"\s+", " ", text).strip()
-
-    # Add safe break points for long strings
     text = text.replace("https://", "https:// ")
     text = text.replace("http://", "http:// ")
     text = text.replace("www.", "www. ")
@@ -294,6 +266,8 @@ def build_pdf_bytes(df_export: pd.DataFrame) -> bytes:
             leader = clean_pdf_text(r.get("Leader Name", ""), 40)
             email = clean_pdf_text(r.get("Email", ""), 50)
             phone = clean_pdf_text(r.get("Phone", ""), 25)
+            website = clean_pdf_text(r.get("Website", ""), 70)
+            linkedin = clean_pdf_text(r.get("LinkedIn", ""), 70)
             score = clean_pdf_text(r.get("Priority Score", ""), 10)
             recommendation = clean_pdf_text(r.get("Recommendation", ""), 70)
             rationale = clean_pdf_text(r.get("Why Selected", ""), 120)
@@ -305,6 +279,8 @@ def build_pdf_bytes(df_export: pd.DataFrame) -> bytes:
             pdf_write_line(pdf, f"Leader: {leader}")
             pdf_write_line(pdf, f"Email: {email}")
             pdf_write_line(pdf, f"Phone: {phone}")
+            pdf_write_line(pdf, f"Website: {website}")
+            pdf_write_line(pdf, f"LinkedIn: {linkedin}")
             pdf_write_line(pdf, f"Priority Score: {score}")
             pdf_write_line(pdf, f"Recommendation: {recommendation}")
             pdf_write_line(pdf, f"Why Selected: {rationale}")
@@ -317,6 +293,68 @@ def build_pdf_bytes(df_export: pd.DataFrame) -> bytes:
         pdf_bytes = pdf_bytes.encode("latin-1", errors="replace")
 
     return pdf_bytes
+
+# ===============================
+# LOAD DATA
+# ===============================
+try:
+    base_df = load_real_data("real_companies.csv")
+except FileNotFoundError:
+    st.error("File not found: real_companies.csv. Put the file in the same folder as app.py.")
+    st.stop()
+except Exception as e:
+    st.error(f"Could not load real_companies.csv: {e}")
+    st.stop()
+
+base_df = add_priority_scores(base_df)
+
+# ===============================
+# SIDEBAR FILTERS
+# ===============================
+with st.sidebar:
+    all_service_types = sorted([x for x in base_df["Service Type"].dropna().unique().tolist() if str(x).strip() != ""])
+    all_industries = sorted([x for x in base_df["Industry"].dropna().unique().tolist() if str(x).strip() != ""])
+    all_countries = sorted([x for x in base_df["Country"].dropna().unique().tolist() if str(x).strip() != ""])
+
+    service_type = st.multiselect(
+        "Service Type",
+        all_service_types,
+        default=all_service_types
+    )
+
+    industry = st.multiselect(
+        "Industry",
+        all_industries,
+        default=all_industries[: min(5, len(all_industries))]
+    )
+
+    country = st.multiselect(
+        "Country",
+        all_countries,
+        default=all_countries[: min(5, len(all_countries))]
+    )
+
+    num_companies = st.slider("Display top prospects", 5, 200, min(30, max(5, len(base_df))))
+    revenue_min = st.slider("Minimum Revenue ($m)", 0, int(max(base_df["Revenue ($m)"].fillna(0).max(), 1000)), 0)
+    score_threshold = st.slider("Minimum Priority Score", 0, 100, 0)
+
+# ===============================
+# FILTERED DATA
+# ===============================
+df = base_df.copy()
+
+if service_type:
+    df = df[df["Service Type"].isin(service_type)]
+
+if industry:
+    df = df[df["Industry"].isin(industry)]
+
+if country:
+    df = df[df["Country"].isin(country)]
+
+df = df[df["Revenue ($m)"].fillna(0) >= revenue_min]
+df = df[df["Priority Score"].fillna(0) >= score_threshold]
+df = df.sort_values(["Priority Score", "Revenue ($m)"], ascending=[False, False]).head(num_companies)
 
 # ===============================
 # TABS
@@ -334,8 +372,8 @@ with tab_guide:
     st.markdown(
         """
         <div class="guide-box">
-        <b>1. Start with the filters in the left sidebar.</b><br>
-        Choose the service type, industries, countries, minimum revenue, the number of companies per industry-country combination, and the number of top prospects to display.
+        <b>1. Place a verified <code>real_companies.csv</code> file in the same folder as <code>app.py</code>.</b><br>
+        The dashboard reads only the real company data you provide in that CSV.
         </div>
         """,
         unsafe_allow_html=True
@@ -344,8 +382,8 @@ with tab_guide:
     st.markdown(
         """
         <div class="guide-box">
-        <b>2. Go to the Overview tab.</b><br>
-        This tab gives you a quick summary of how many prospects match your filters, the average revenue, average EBITDA margin, and average priority score.
+        <b>2. Start with the filters in the left sidebar.</b><br>
+        Choose service type, industries, countries, minimum revenue, and minimum priority score.
         </div>
         """,
         unsafe_allow_html=True
@@ -354,8 +392,8 @@ with tab_guide:
     st.markdown(
         """
         <div class="guide-box">
-        <b>3. Review the Prospect List tab.</b><br>
-        This tab shows the filtered list for both sell-side and buy-side opportunities. You can review company name, industry, country, leadership contact, website, LinkedIn, why the company was selected, and the recommendation.
+        <b>3. Use the Prospect List tab.</b><br>
+        Review company name, leadership, real website, real email, real LinkedIn link, and why each firm was selected.
         </div>
         """,
         unsafe_allow_html=True
@@ -364,8 +402,8 @@ with tab_guide:
     st.markdown(
         """
         <div class="guide-box">
-        <b>4. Use the Company Intelligence tab for deeper analysis.</b><br>
-        Select any company from the dropdown to view its profile, strategic rationale, contact details, growth, EBITDA margin, and recommendation.
+        <b>4. Use Company Intelligence.</b><br>
+        Select a company to see detailed business, contact, and M&A-related information.
         </div>
         """,
         unsafe_allow_html=True
@@ -374,8 +412,8 @@ with tab_guide:
     st.markdown(
         """
         <div class="guide-box">
-        <b>5. Use the Charts tab to compare companies visually.</b><br>
-        The scatter chart compares revenue and EBITDA while the bar chart highlights the highest-priority targets. These visuals help identify which prospects may deserve more attention.
+        <b>5. Use Charts.</b><br>
+        Compare revenue, EBITDA, and priority score visually.
         </div>
         """,
         unsafe_allow_html=True
@@ -384,25 +422,16 @@ with tab_guide:
     st.markdown(
         """
         <div class="guide-box">
-        <b>6. Use the Exports tab to download your results.</b><br>
-        Export the filtered prospect list to Excel or PDF for presentation, review, or sharing.
+        <b>6. Use Exports.</b><br>
+        Download the currently filtered results to Excel or PDF.
         </div>
         """,
         unsafe_allow_html=True
     )
 
-    st.markdown("### Recommended Workflow")
-    st.write("1. Select service type, industries, and countries")
-    st.write("2. Adjust the revenue and priority score filters")
-    st.write("3. Review the overview metrics")
-    st.write("4. Study the prospect table")
-    st.write("5. Select a company for deeper intelligence")
-    st.write("6. Review the comparison charts")
-    st.write("7. Export the final output to Excel or PDF")
-
-    st.markdown("### What the Priority Score Means")
+    st.markdown("### Priority Score")
     st.write(
-        "The Priority Score is a simple composite measure that combines growth, profitability, scale, and service-type relevance. A higher score indicates a stronger candidate for immediate outreach or further M&A evaluation."
+        "The Priority Score combines growth, profitability, scale, and service-type relevance. It is meant to help rank prospects, not replace analyst judgment."
     )
 
 # ===============================
@@ -412,7 +441,7 @@ with tab_overview:
     st.subheader("Overview")
 
     if df.empty:
-        st.warning("No companies match the current filters. Try broadening the industries, countries, or lowering the minimum filters.")
+        st.warning("No companies match the current filters.")
     else:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Prospects", len(df))
@@ -462,39 +491,49 @@ with tab_intelligence:
         left, right = st.columns([1.2, 1])
 
         with left:
-            st.markdown(f"### {selected_row['Company']}")
-            st.write(f"**Service Type:** {selected_row['Service Type']}")
-            st.write(f"**Industry:** {selected_row['Industry']}")
-            st.write(f"**Country:** {selected_row['Country']}")
-            st.write(f"**Leader:** {selected_row['Leader Name']} ({selected_row['Leader Title']})")
-            st.write(f"**Phone:** {selected_row['Phone']}")
-            st.markdown(f"**Email:** [{selected_row['Email']}](mailto:{selected_row['Email']})")
-            st.markdown(f"**Website:** [{selected_row['Website']}]({selected_row['Website']})")
-            st.markdown(f"**LinkedIn:** [Open Profile]({selected_row['LinkedIn']})")
-            st.write(f"**Description:** {selected_row['Description']}")
+            st.markdown(f"### {safe_text(selected_row['Company'])}")
+            st.write(f"**Service Type:** {safe_text(selected_row['Service Type'])}")
+            st.write(f"**Industry:** {safe_text(selected_row['Industry'])}")
+            st.write(f"**Country:** {safe_text(selected_row['Country'])}")
+            st.write(f"**Leader:** {safe_text(selected_row['Leader Name'])} ({safe_text(selected_row['Leader Title'])})")
+            st.write(f"**Phone:** {safe_text(selected_row['Phone']) or 'Not available'}")
+            st.markdown(f"**Email:** {safe_mail(selected_row['Email'])}")
+            st.markdown(f"**Website:** {safe_link(safe_text(selected_row['Website']) or 'Open Website', selected_row['Website'])}")
+            st.markdown(f"**LinkedIn:** {safe_link('Open LinkedIn', selected_row['LinkedIn'])}")
+            st.write(f"**Description:** {safe_text(selected_row['Description'])}")
 
         with right:
-            st.metric("Revenue ($m)", selected_row["Revenue ($m)"])
-            st.metric("EBITDA ($m)", selected_row["EBITDA ($m)"])
-            st.metric("Growth Rate", f"{round(selected_row['Growth Rate'] * 100, 1)}%")
-            st.metric("EBITDA Margin", f"{round(selected_row['EBITDA Margin'] * 100, 1)}%")
-            st.metric("Priority Score", selected_row["Priority Score"])
+            revenue_val = selected_row["Revenue ($m)"]
+            ebitda_val = selected_row["EBITDA ($m)"]
+            growth_val = selected_row["Growth Rate"]
+            margin_val = selected_row["EBITDA Margin"]
+
+            st.metric("Revenue ($m)", "-" if pd.isna(revenue_val) else round(revenue_val, 1))
+            st.metric("EBITDA ($m)", "-" if pd.isna(ebitda_val) else round(ebitda_val, 1))
+            st.metric("Growth Rate", "-" if pd.isna(growth_val) else f"{round(growth_val * 100, 1)}%")
+            st.metric("EBITDA Margin", "-" if pd.isna(margin_val) else f"{round(margin_val * 100, 1)}%")
+            st.metric("Priority Score", "-" if pd.isna(selected_row["Priority Score"]) else selected_row["Priority Score"])
 
         st.markdown("### Strategic Rationale")
-        st.write(selected_row["Why Selected"])
+        st.write(safe_text(selected_row["Why Selected"]))
 
         st.markdown("### Recommendation")
-        st.success(selected_row["Recommendation"])
+        st.success(safe_text(selected_row["Recommendation"]))
 
-        st.markdown("### M&A Guidance")
-        if selected_row["Service Type"] == "Sell-Side":
-            st.write(
-                "This company may benefit from sell-side preparation through stronger financial reporting, a clear equity story, buyer targeting, and pre-sale operational cleanup to improve valuation."
-            )
-        else:
-            st.write(
-                "This company may benefit from buy-side preparation through acquisition screening, synergy mapping, disciplined valuation, financing readiness, and integration planning."
-            )
+        extra_sections = {
+            "Strategic Notes": "Strategic Information",
+            "Valuation Notes": "Valuation",
+            "Economic Factors": "Economic Factors",
+            "Political Factors": "Political Factors",
+            "Environmental Factors": "Environmental Factors",
+            "Quantitative Notes": "Quantitative Factors"
+        }
+
+        for col, title in extra_sections.items():
+            val = safe_text(selected_row[col])
+            if val:
+                st.markdown(f"### {title}")
+                st.write(val)
 
 # ===============================
 # CHARTS TAB
@@ -502,11 +541,13 @@ with tab_intelligence:
 with tab_charts:
     st.subheader("Comparison Charts")
 
-    if df.empty:
+    chart_df = df.dropna(subset=["Revenue ($m)", "EBITDA ($m)", "Priority Score"])
+
+    if chart_df.empty:
         st.info("No chart data available for the selected filters.")
     else:
         scatter_fig = px.scatter(
-            df,
+            chart_df,
             x="Revenue ($m)",
             y="EBITDA ($m)",
             size="Priority Score",
@@ -516,7 +557,7 @@ with tab_charts:
         )
         st.plotly_chart(scatter_fig, use_container_width=True)
 
-        top_df = df.sort_values("Priority Score", ascending=False).head(10)
+        top_df = chart_df.sort_values("Priority Score", ascending=False).head(10)
         bar_fig = px.bar(
             top_df,
             x="Priority Score",
@@ -555,7 +596,7 @@ with tab_exports:
         )
 
         st.markdown(
-            "<div class='small-note'>If you change filters, export files will reflect the currently displayed dataset.</div>",
+            "<div class='small-note'>Exports reflect the currently filtered dataset from real_companies.csv.</div>",
             unsafe_allow_html=True
         )
 
