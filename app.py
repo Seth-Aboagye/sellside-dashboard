@@ -137,7 +137,6 @@ def generate_data(industries, countries, n_per_combo, selected_services):
                     leader_name = f"{leader_first} {leader_last}"
 
                     company_name = f"{rng.choice(company_prefix)} {ind} {i+1}"
-
                     domain_name = company_name.lower().replace(" ", "").replace("&", "and")
 
                     if svc == "Sell-Side":
@@ -228,11 +227,11 @@ def build_excel_bytes(df_export: pd.DataFrame) -> bytes:
 class PDFReport(FPDF):
     def header(self):
         self.set_font("Helvetica", "B", 14)
-        self.cell(0, 10, "SellSide Group M&A Intelligence Dashboard Report", new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 10, "SellSide Group M&A Intelligence Dashboard Report", ln=True)
         self.set_font("Helvetica", "", 10)
-        self.cell(0, 6, DESIGNED_BY, new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 6, DESIGNED_BY, ln=True)
         self.set_font("Helvetica", "", 9)
-        self.cell(0, 6, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 6, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
         self.ln(3)
 
 def clean_pdf_text(value, max_len=140):
@@ -256,24 +255,34 @@ def clean_pdf_text(value, max_len=140):
 
     text = re.sub(r"\s+", " ", text).strip()
 
+    # Add safe break points for long strings
     text = text.replace("https://", "https:// ")
     text = text.replace("http://", "http:// ")
     text = text.replace("www.", "www. ")
     text = text.replace("@", "@ ")
+    text = text.replace("/", "/ ")
+    text = text.replace("_", "_ ")
 
     if len(text) > max_len:
         text = text[: max_len - 3] + "..."
 
     return text
 
+def pdf_write_line(pdf, text, width=190, height=6, bold=False):
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font("Helvetica", "B" if bold else "", 11 if bold else 10)
+    pdf.multi_cell(width, height, text)
+    pdf.set_x(pdf.l_margin)
+
 def build_pdf_bytes(df_export: pd.DataFrame) -> bytes:
-    pdf = PDFReport()
+    pdf = PDFReport(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_left_margin(10)
+    pdf.set_right_margin(10)
     pdf.add_page()
-    pdf.set_font("Helvetica", "", 10)
 
     if df_export.empty:
-        pdf.cell(0, 8, "No records available for export.", new_x="LMARGIN", new_y="NEXT")
+        pdf_write_line(pdf, "No records available for export.")
     else:
         export_reset = df_export.reset_index(drop=True)
 
@@ -289,18 +298,16 @@ def build_pdf_bytes(df_export: pd.DataFrame) -> bytes:
             recommendation = clean_pdf_text(r.get("Recommendation", ""), 70)
             rationale = clean_pdf_text(r.get("Why Selected", ""), 120)
 
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.multi_cell(0, 7, f"{idx + 1}. {company}")
-            pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 6, f"Service Type: {service_val}")
-            pdf.multi_cell(0, 6, f"Industry: {industry_val}")
-            pdf.multi_cell(0, 6, f"Country: {country_val}")
-            pdf.multi_cell(0, 6, f"Leader: {leader}")
-            pdf.multi_cell(0, 6, f"Email: {email}")
-            pdf.multi_cell(0, 6, f"Phone: {phone}")
-            pdf.multi_cell(0, 6, f"Priority Score: {score}")
-            pdf.multi_cell(0, 6, f"Recommendation: {recommendation}")
-            pdf.multi_cell(0, 6, f"Why Selected: {rationale}")
+            pdf_write_line(pdf, f"{idx + 1}. {company}", bold=True)
+            pdf_write_line(pdf, f"Service Type: {service_val}")
+            pdf_write_line(pdf, f"Industry: {industry_val}")
+            pdf_write_line(pdf, f"Country: {country_val}")
+            pdf_write_line(pdf, f"Leader: {leader}")
+            pdf_write_line(pdf, f"Email: {email}")
+            pdf_write_line(pdf, f"Phone: {phone}")
+            pdf_write_line(pdf, f"Priority Score: {score}")
+            pdf_write_line(pdf, f"Recommendation: {recommendation}")
+            pdf_write_line(pdf, f"Why Selected: {rationale}")
             pdf.ln(2)
 
     pdf_bytes = pdf.output(dest="S")
@@ -560,4 +567,3 @@ st.markdown(
     "<div style='text-align:center; font-size:14px;'>Designed and developed by Seth Agyei Aboagye</div>",
     unsafe_allow_html=True
 )
-
