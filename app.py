@@ -126,7 +126,7 @@ def load_real_data(file_path: str) -> pd.DataFrame:
     # Drop rows missing core values
     df = df.dropna(subset=["Company", "Service Type", "Industry", "Country"])
 
-    # Standardize service type
+    # Standardize service type labels
     df["Service Type"] = df["Service Type"].replace({
         "Sellside": "Sell-Side",
         "Sell Side": "Sell-Side",
@@ -134,15 +134,17 @@ def load_real_data(file_path: str) -> pd.DataFrame:
         "Buy Side": "Buy-Side"
     })
 
-    # If Recommendation is blank, fill later
+    # Ensure recommendation exists
     df["Recommendation"] = df["Recommendation"].fillna("").astype(str)
 
     return df
+
 
 def safe_text(value):
     if pd.isna(value):
         return ""
     return str(value).strip()
+
 
 def safe_link(label, url):
     url = safe_text(url)
@@ -150,11 +152,13 @@ def safe_link(label, url):
         return f"[{label}]({url})"
     return "Not available"
 
+
 def safe_mail(email):
     email = safe_text(email)
     if email:
         return f"[{email}](mailto:{email})"
     return "Not available"
+
 
 # ===============================
 # SCORING
@@ -166,7 +170,10 @@ def add_priority_scores(df: pd.DataFrame) -> pd.DataFrame:
         out["Priority Score"] = []
         return out
 
-    revenue_max = max(out["Revenue ($m)"].max(skipna=True), 1) if out["Revenue ($m)"].notna().any() else 1
+    if out["Revenue ($m)"].notna().any():
+        revenue_max = max(out["Revenue ($m)"].max(skipna=True), 1)
+    else:
+        revenue_max = 1
 
     growth_component = out["Growth Rate"].fillna(0)
     margin_component = out["EBITDA Margin"].fillna(0)
@@ -190,6 +197,7 @@ def add_priority_scores(df: pd.DataFrame) -> pd.DataFrame:
 
     return out
 
+
 # ===============================
 # EXPORT HELPERS
 # ===============================
@@ -198,6 +206,7 @@ def build_excel_bytes(df_export: pd.DataFrame) -> bytes:
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_export.to_excel(writer, index=False, sheet_name="Prospects")
     return output.getvalue()
+
 
 class PDFReport(FPDF):
     def header(self):
@@ -208,6 +217,7 @@ class PDFReport(FPDF):
         self.set_font("Helvetica", "", 9)
         self.cell(0, 6, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
         self.ln(3)
+
 
 def clean_pdf_text(value, max_len=140):
     if pd.isna(value):
@@ -240,11 +250,13 @@ def clean_pdf_text(value, max_len=140):
 
     return text
 
+
 def pdf_write_line(pdf, text, width=190, height=6, bold=False):
     pdf.set_x(pdf.l_margin)
     pdf.set_font("Helvetica", "B" if bold else "", 11 if bold else 10)
     pdf.multi_cell(width, height, text)
     pdf.set_x(pdf.l_margin)
+
 
 def build_pdf_bytes(df_export: pd.DataFrame) -> bytes:
     pdf = PDFReport(orientation="P", unit="mm", format="A4")
@@ -294,6 +306,7 @@ def build_pdf_bytes(df_export: pd.DataFrame) -> bytes:
 
     return pdf_bytes
 
+
 # ===============================
 # LOAD DATA
 # ===============================
@@ -325,18 +338,30 @@ with st.sidebar:
     industry = st.multiselect(
         "Industry",
         all_industries,
-        default=all_industries[: min(5, len(all_industries))]
+        default=all_industries
     )
 
     country = st.multiselect(
         "Country",
         all_countries,
-        default=all_countries[: min(5, len(all_countries))]
+        default=all_countries
     )
 
-    num_companies = st.slider("Display top prospects", 5, 200, min(30, max(5, len(base_df))))
-    revenue_min = st.slider("Minimum Revenue ($m)", 0, int(max(base_df["Revenue ($m)"].fillna(0).max(), 1000)), 0)
+    max_revenue_value = int(max(base_df["Revenue ($m)"].fillna(0).max(), 100))
+    revenue_min = st.slider("Minimum Revenue ($m)", 0, max_revenue_value, 0)
+
     score_threshold = st.slider("Minimum Priority Score", 0, 100, 0)
+
+    show_all = st.checkbox("Show all filtered companies", value=False)
+
+    max_display = max(len(base_df), 5)
+    default_display = min(30, max_display)
+    num_companies = st.slider(
+        "Number of companies to display",
+        5,
+        max_display,
+        default_display
+    )
 
 # ===============================
 # FILTERED DATA
@@ -353,8 +378,14 @@ if country:
     df = df[df["Country"].isin(country)]
 
 df = df[df["Revenue ($m)"].fillna(0) >= revenue_min]
-df = df[df["Priority Score"].fillna(0) >= score_threshold]
-df = df.sort_values(["Priority Score", "Revenue ($m)"], ascending=[False, False]).head(num_companies)
+
+if score_threshold > 0:
+    df = df[df["Priority Score"].fillna(0) >= score_threshold]
+
+df = df.sort_values(["Priority Score", "Revenue ($m)"], ascending=[False, False])
+
+if not show_all:
+    df = df.head(num_companies)
 
 # ===============================
 # TABS
@@ -383,7 +414,7 @@ with tab_guide:
         """
         <div class="guide-box">
         <b>2. Start with the filters in the left sidebar.</b><br>
-        Choose service type, industries, countries, minimum revenue, and minimum priority score.
+        Choose service type, industries, countries, minimum revenue, minimum priority score, and either show all companies or limit the final list to a selected number.
         </div>
         """,
         unsafe_allow_html=True
@@ -393,7 +424,7 @@ with tab_guide:
         """
         <div class="guide-box">
         <b>3. Use the Prospect List tab.</b><br>
-        Review company name, leadership, real website, real email, real LinkedIn link, and why each firm was selected.
+        Review company name, leadership, website, email, LinkedIn link, and why each firm was selected.
         </div>
         """,
         unsafe_allow_html=True
@@ -443,11 +474,12 @@ with tab_overview:
     if df.empty:
         st.warning("No companies match the current filters.")
     else:
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Prospects", len(df))
         c2.metric("Avg Revenue ($m)", round(df["Revenue ($m)"].mean(), 1))
         c3.metric("Avg EBITDA Margin", f"{round(df['EBITDA Margin'].mean() * 100, 1)}%")
         c4.metric("Avg Priority Score", round(df["Priority Score"].mean(), 1))
+        c5.metric("Buy-Side / Sell-Side", f"{(df['Service Type'] == 'Buy-Side').sum()} / {(df['Service Type'] == 'Sell-Side').sum()}")
 
         st.dataframe(
             df[[
@@ -541,23 +573,30 @@ with tab_intelligence:
 with tab_charts:
     st.subheader("Comparison Charts")
 
-    chart_df = df.dropna(subset=["Revenue ($m)", "EBITDA ($m)", "Priority Score"])
+    chart_df = df.dropna(subset=["Revenue ($m)", "Priority Score"])
 
     if chart_df.empty:
         st.info("No chart data available for the selected filters.")
     else:
+        y_column = "EBITDA ($m)" if chart_df["EBITDA ($m)"].notna().any() else "Priority Score"
+
         scatter_fig = px.scatter(
             chart_df,
             x="Revenue ($m)",
-            y="EBITDA ($m)",
+            y=y_column,
             size="Priority Score",
             color="Service Type",
             hover_name="Company",
-            title="Revenue vs EBITDA by Company"
+            title=f"Revenue vs {y_column} by Company"
         )
         st.plotly_chart(scatter_fig, use_container_width=True)
 
-        top_df = chart_df.sort_values("Priority Score", ascending=False).head(10)
+        top_df = chart_df.sort_values("Priority Score", ascending=False)
+        if not show_all:
+            top_df = top_df.head(min(10, len(top_df)))
+        else:
+            top_df = top_df.head(min(20, len(top_df)))
+
         bar_fig = px.bar(
             top_df,
             x="Priority Score",
